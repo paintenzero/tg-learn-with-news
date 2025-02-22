@@ -1,0 +1,1 @@
+An application that connects to news sources and fetches the news.
