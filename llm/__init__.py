@@ -144,7 +144,7 @@ Do not say anything else except the translation. For any words except the transl
         result = {
             key: value[0]
             for key, value in words.items()
-            if value[1] not in exclude_categories and value[0] != key
+            if value[1].lower() not in exclude_categories and value[0] != key
         }
         return result
 
