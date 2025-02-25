@@ -1,16 +1,12 @@
-from repository import NewsRepository, News
-from newsbot import NewsBot
+from repository import NewsRepository
 from llm import LLM
+from newsbot import NewsBot
 from dotenv import load_dotenv
-import asyncio
 import os
 
 load_dotenv()
 
-channels = dict()
-channels["general"] = os.environ["TELEGRAM_GREEK_GAME_CHANNEL"]
-channels["gaming"] = os.environ["TELEGRAM_GREEK_GAME_CHANNEL"]
-
+# Connect the database
 repository = NewsRepository(
     username=os.getenv("MYSQL_USER"),
     password=os.getenv("MYSQL_PASSWORD"),
@@ -19,6 +15,7 @@ repository = NewsRepository(
     port=os.getenv("MYSQL_PORT") or 3306,
 )
 
+# Initialize LLM Models
 words_api_key = os.getenv("OPENAI_API_KEY")
 if os.getenv("WORDS_OPENAI_API_KEY") is not None:
     words_api_key = os.environ["WORDS_OPENAI_API_KEY"]
@@ -39,11 +36,34 @@ llm = LLM(
     repository=repository,
 )
 
+# Start userbot
+
+
+# @app.on_message()
+# async def handle_message(client, message):
+#     if message.chat.id == -1001338358512 or message.chat.id == 1494997:  # VGTIMES and me
+#         await client.read_chat_history(message.chat.id)
+#         if message.media_group_id is None:
+#             await message.forward(chat_id="Znaimebot")  # @znaimebot
+#         else:
+#             media_group = await client.get_media_group(message.chat.id, message.id)
+#             if message.id == media_group[-1].id:
+#                 message_ids = [msg.id for msg in media_group]
+#                 await client.forward_messages(chat_id="Znaimebot", from_chat_id=message.chat.id, message_ids=message_ids,)
+
+
+# Our Channels to post translated news to
+post_channels = dict()
+post_channels["general"] = os.environ["TELEGRAM_GREEK_GAME_CHANNEL"]
+post_channels["gaming"] = os.environ["TELEGRAM_GREEK_GAME_CHANNEL"]
+watch_channels = os.environ["TELEGRAM_WATCH_CHANNELS"].split(',')
+
 tg_bot = NewsBot(
-    telegram_token=os.getenv("TELEGRAM_BOT_TOKEN"),
-    admin_id=int(os.environ["ADMIN_USER_ID"]),
+    telegram_api_id=os.getenv("TELEGRAM_API_ID"),
+    telegram_api_key=os.getenv("TELEGRAM_API_HASH"),
+    post_channels=post_channels,
+    watch_channels=watch_channels,
     repository=repository,
-    channels=channels,
     llm=llm,
 )
 

@@ -4,4 +4,7 @@ sqlalchemy~=2.0.38
 pymysql~=1.1.1
 
 openai~=1.61.1
-python-telegram-bot[job-queue]~=21.10
+
+hydrogram~=0.2.0
+tgcrypto~=1.2.5
+uvloop~=0.21.0

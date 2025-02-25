@@ -1,18 +1,7 @@
-from telegram import (
-    constants,
-    LinkPreviewOptions,
-    Update,
-    InputMediaVideo,
-    InputMediaPhoto,
-    MessageOriginUser,
-)
-from telegram.helpers import escape_markdown
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from hydrogram import Client, filters, idle
+from hydrogram.handlers import MessageHandler
+from hydrogram.types import  Photo, Video, InputMediaPhoto, InputMediaVideo
+from hydrogram.enums import ParseMode
 from repository import NewsRepository, News, NewsMedia
 from llm import LLM
 import re
@@ -20,24 +9,26 @@ import re
 
 MEDIA_CLASSES = {"photo": InputMediaPhoto, "video": InputMediaVideo}
 
-
 class NewsBot:
     def __init__(
         self,
-        telegram_token: str,
-        admin_id: int,
-        channels: dict,
+        telegram_api_id: str,
+        telegram_api_key: str,
+        post_channels: dict,
+        watch_channels: list,
         repository: NewsRepository,
         llm: LLM,
     ):
-        self.admin_ids = [admin_id]
-        self.app = ApplicationBuilder().token(telegram_token).build()
-        self.app.add_handler(
-            MessageHandler(filters.FORWARDED & filters.USER, self.message_handler)
-        )
+        self.post_channels = post_channels
+        self.watch_channels = [int(id) for id in watch_channels]
         self.repository = repository
         self.llm = llm
-        self.channels = channels
+        self.app = Client("my_account", api_id=telegram_api_id, api_hash=telegram_api_key)
+        self.app.add_handler(
+            MessageHandler(
+                self.message_handler, filters=filters.chat(chats=self.watch_channels)
+            )
+        )
 
     @staticmethod
     def replace_words(text, dictionary):
@@ -52,7 +43,7 @@ class NewsBot:
             matched_word = match.group(0)  # The full matched word (e.g., "παιχνιδιού")
             prefix = match.group(1)  # The dictionary key (e.g., "παιχνίδι")
             translation = dictionary[prefix]
-            return f"{matched_word} \\(||{translation}||\\)"
+            return f"{matched_word} (||{translation}||)"
 
         # Perform the replacement
         result = re.sub(pattern, replacement, text)
@@ -63,35 +54,28 @@ class NewsBot:
 ---
 Source: {news.source}
 """
-        escaped_text = escape_markdown(text=translated_text, version=2)
-        escaped_text = self.replace_words(
-            text=escaped_text, dictionary=news.greek_words_a1
-        )
-        # for greek in news.greek_words_a1:
-        #     escaped_text = escaped_text.replace(
-        #         greek, f"{greek} \\(||{news.greek_words_a1[greek]}||\\)"
-        #     )
+        text = self.replace_words(text=translated_text, dictionary=news.greek_words_a1)
 
         if len(news.media) == 0:
             return await self.__send_text_only(
                 news=news,
-                text=escaped_text,
+                text=text,
                 chat_id=chat_id,
             )
         else:
             return await self.__send_media_group(
                 news=news,
-                text=escaped_text,
+                text=text,
                 chat_id=chat_id,
             )
 
     async def __send_text_only(self, news: News, text: str, chat_id: int) -> bool:
         try:
-            await self.app.bot.send_message(
+            await self.app.send_message(
                 chat_id=chat_id,
                 text=text,
-                parse_mode=constants.ParseMode.MARKDOWN_V2,
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True,
             )
             return True
         except Exception as e:
@@ -100,7 +84,7 @@ Source: {news.source}
 
     async def __send_media_group(self, news: News, text: str, chat_id: int):
         try:
-            if len(news.media) > 1:
+            if len(news.media) > 1: # Send as a media group
                 media_list = []
                 first = True
                 for media in news.media:
@@ -108,128 +92,31 @@ Source: {news.source}
                         media_input = MEDIA_CLASSES[media.type](
                             media=media.file_id,
                             caption=text,
-                            parse_mode=constants.ParseMode.MARKDOWN_V2,
+                            parse_mode=ParseMode.MARKDOWN,
                         )
                         first = False
                     else:
                         media_input = MEDIA_CLASSES[media.type](media=media.file_id)
                     media_list.append(media_input)
-                await self.app.bot.send_media_group(
+                await self.app.send_media_group(
                     chat_id=chat_id,
                     media=media_list,
                 )
             else:
-                func_name = f"send_{news.media[0].type}"
-                await self.app.bot[func_name](
-                    chat_id,
-                    news.media[0].file_id,
-                    caption=text,
-                    parse_mode=constants.ParseMode.MARKDOWN_V2,
-                )
+                pos_args = [chat_id, news.media[0].file_id]
+                func_args = {
+                    "caption": text,
+                    "parse_mode": ParseMode.MARKDOWN,
+                }
+                if news.media[0].type == 'photo':
+                    await self.app.send_photo(*pos_args, **func_args)
+                elif news.media[0].type == 'video':
+                    await self.app.send_video(*pos_args, **func_args)
+
             return True
         except Exception as e:
             print(f"Exception while sending a message: {e}")
             return False
-
-    async def message_handler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
-        if update.message.from_user.id not in self.admin_ids:
-            await update.message.reply_text(
-                "You are not allowed to forward me any message"
-            )
-            return
-
-        news_id = 0
-        # If message is just another media for previous news
-        if update.message.caption is not None or update.message.text is not None:
-            # The main news message
-            news = News()
-            news.original_text = (
-                update.message.caption
-                if update.message.caption
-                else update.message.text
-            )
-            if update.message.media_group_id is not None:
-                news.media_group_id = update.message.media_group_id
-            forward_chat = update.message.forward_origin
-            if isinstance(forward_chat, MessageOriginUser):
-                news.source = f"@{forward_chat.sender_user.username}"
-            else:
-                news.source = f"https://t.me/{forward_chat.chat.username}/{forward_chat.message_id}"
-            news.sender_id = str(update.message.from_user.id)
-            news.message_id = update.message.message_id
-            news.message_chat_id = update.message.chat.id
-            news.type = "gaming"
-            news_id = self.repository.add_news(news)
-
-            context.job_queue.run_once(
-                callback=self.process_message,
-                when=15,
-                data=str(news_id),
-            )
-
-        if update.message.media_group_id is not None:
-            media_group_id = update.message.media_group_id
-        elif news_id > 0:
-            media_group_id = f"-{news_id}"
-        else:
-            print("No media_group_id and no news id. Refusing to store the message")
-            print(update.message)
-            return
-
-        if update.message.photo is not None:
-            file_id = ""
-            if isinstance(update.message.photo, tuple):
-                if len(update.message.photo) > 0:
-                    file_id = update.message.photo[0].file_id
-            else:
-                file_id = update.message.photo.file_id
-            if len(file_id) > 0:
-                photo = NewsMedia()
-                photo.file_id = file_id
-                photo.media_group_id = media_group_id
-                photo.message_id = update.message.message_id
-                photo.type = "photo"
-                self.repository.add_media(
-                    media=photo,
-                )
-
-        if update.message.video is not None:
-            file_id = ""
-            if isinstance(update.message.video, tuple):
-                if len(update.message.video) > 0:
-                    file_id = update.message.video[0].file_id
-            else:
-                file_id = update.message.video.file_id
-            if len(file_id) > 0:
-                video = NewsMedia()
-                video.file_id = file_id
-                video.media_group_id = media_group_id
-                video.message_id = update.message.message_id
-                video.type = "video"
-                self.repository.add_media(
-                    media=video,
-                )
-
-    async def process_message(self, context: ContextTypes.DEFAULT_TYPE):
-        news_id = int(context.job.data)
-        news = self.repository.get_news_by_id(news_id)
-        if news is not None:
-            await self.process_news(news)
-            # Delete message in sender's chat
-            if news.message_id > 0:
-                await self.app.bot.delete_message(
-                    chat_id=news.message_chat_id,
-                    message_id=news.message_id,
-                )
-                for media in news.media:
-                    if media.message_id == news.message_id or media.message_id == 0:
-                        continue
-                    await self.app.bot.delete_message(
-                        chat_id=news.message_chat_id,
-                        message_id=media.message_id,
-                    )
 
     async def process_news(self, news: News) -> bool:
         if news.greek_text_a1 is None:
@@ -244,20 +131,75 @@ Source: {news.source}
                 news.greek_words_a1 = result["words"]
             else:
                 raise ValueError(f"Unable to get a translation. Got: {result}")
-                return False
-        await self.send_translation(news, self.channels[news.type])
-        self.repository.update_news(news_id=news.id, published=True)
+        sent = await self.send_translation(news, self.post_channels[news.type])
+        if sent:
+            self.repository.update_news(news_id=news.id, published=True)
 
-    async def process_unpublished_messages(self, context: ContextTypes.DEFAULT_TYPE):
+    async def process_unpublished_messages(self):
         while True:
             news = self.repository.get_unpublished_news()
             if news is None:
                 break
             await self.process_news(news)
 
+    async def message_handler(self, client, message) -> None:
+        """
+        Handle incoming messages from the watched channels
+        """
+        print(f"Received message from {message.chat.id}")
+
+        await client.read_chat_history(message.chat.id)
+
+        news = News()
+        if message.chat.username is not None:
+            news.source = f"https://t.me/{message.chat.username}/{message.id}"
+        else:
+            news.source = f"{message.chat.title}"
+
+        if message.media_group_id is not None:
+            messages = await client.get_media_group(message.chat.id, message.id)
+            if messages[-1].id != message.id:
+                return
+            news.media_group_id = message.media_group_id
+        else:
+            messages = [message]
+
+        news.message_chat_id = message.chat.id
+        news.type = 'gaming' # will determine the type later using channel id
+        for msg in messages:
+            if msg.text is not None:
+                news.original_text = msg.text
+                news.message_id = msg.id
+            elif msg.caption is not None:
+                news.original_text = msg.caption
+                news.message_id = msg.id
+            if msg.video is not None and isinstance(msg.video, Video):
+                video = NewsMedia(
+                    file_id=msg.video.file_id,
+                    type='video',
+                    message_id=msg.id,
+                )
+                news.media.append(video)
+            if msg.photo is not None and isinstance(msg.photo, Photo):
+                photo = NewsMedia(
+                    file_id=msg.photo.file_id,
+                    type='photo',
+                    message_id=msg.id,
+                )
+                news.media.append(photo)
+
+        news_id = self.repository.add_news(news)
+        try:
+            news = self.repository.get_news_by_id(news_id)
+            await self.process_news(news)
+        except Exception as e:
+            print(f"Unable to get translation: {e}")
+
+    async def __run(self):
+        await self.app.start()
+        await self.process_unpublished_messages()
+        await idle()
+        await self.app.stop()
+
     def run(self):
-        self.app.job_queue.run_once(
-            callback=self.process_unpublished_messages,
-            when=1,
-        )
-        self.app.run_polling()
+        self.app.run(self.__run())

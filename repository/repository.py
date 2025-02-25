@@ -52,41 +52,9 @@ class NewsRepository:
 
     @with_session
     def add_news(self, news: News, session: Session) -> int | None:
-        # if placeholder was already created to store media...
-        if news.media_group_id is not None:
-            news_id = self.get_news_id_by_media_group_id(news.media_group_id)
-        else:
-            news_id = -1
-        if news_id > 0:
-            placeholder = self.get_news_by_id(news_id, session=session)
-            placeholder.original_text = news.original_text
-            placeholder.greek_text_a1 = news.greek_text_a1
-            placeholder.greek_words_a1 = news.greek_words_a1
-            placeholder.source = news.source
-            placeholder.published = news.published
-            placeholder.message_id = news.message_id
-            placeholder.message_chat_id = news.message_chat_id
-            placeholder.sender_id = news.sender_id
-            placeholder.type = news.type
-        else:
-            session.add(news)
+        session.add(news)
         session.commit()
-        if news_id < 0:  # New news
-            news_id = news.id
-            if news.media_group_id is None:
-                news.media_group_id = str(-news_id)
-                session.commit()
-        return news_id
-
-    @with_session
-    def get_news_id_by_media_group_id(
-        self, media_group_id: int, session: Session
-    ) -> int:
-        news = session.query(News).filter_by(media_group_id=media_group_id).first()
-        if news is not None:
-            return news.id
-        else:
-            return -1
+        return news.id
 
     @with_session
     def get_news_by_id(self, news_id: int, session: Session) -> News | None:
@@ -97,26 +65,16 @@ class NewsRepository:
             .first()
         )
         return news
-
+    
     @with_session
-    def add_media(self, media: NewsMedia, session: Session):
-        if (
-            self.get_news_id_by_media_group_id(
-                media_group_id=media.media_group_id,
-                session=session,
-            )
-            < 0
-        ):
-            # Add empty news to store the media
-            news = News()
-            news.original_text = ""
-            news.source = ""
-            news.sender_id = ""
-            news.media_group_id = media.media_group_id
-            session.add(news)
-        session.add(media)
-        session.commit()
-        return media
+    def get_news_id_by_media_group_id(
+        self, media_group_id: int, session: Session
+    ) -> int:
+        news = session.query(News).filter_by(media_group_id=media_group_id).first()
+        if news is not None:
+            return news.id
+        else:
+            return -1
 
     def add_translation(
         self, news_id: int, translation_a1: str, words_a1: dict

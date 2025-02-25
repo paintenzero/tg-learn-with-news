@@ -130,7 +130,6 @@ Do not say anything else except the translation. For any words except the transl
         return self.process_words_result(words=result)
 
     def process_words_result(self, words: dict) -> dict:
-        print(f"process words: {words}")
         exclude_categories = {
             "preposition",
             "article",
